@@ -1,10 +1,9 @@
-load("@rules_tf//tf/toolchains/terraform:toolchain.bzl", "terraform_download")
-load("@rules_tf//tf/toolchains/tflint:toolchain.bzl", "tflint_download")
-load("@rules_tf//tf/toolchains/tfdoc:toolchain.bzl", "tfdoc_download")
-load("@rules_tf//tf/toolchains/tofu:toolchain.bzl", "tofu_download")
 load("@rules_tf//tf:toolchains.bzl", "tf_toolchains")
-load("@rules_tf//tf:versions.bzl", "TFDOC_VERSION")
-load("@rules_tf//tf:versions.bzl", "TFLINT_VERSION")
+load("@rules_tf//tf:versions.bzl", "TFDOC_VERSION", "TFLINT_VERSION")
+load("@rules_tf//tf/toolchains/terraform:toolchain.bzl", "terraform_download")
+load("@rules_tf//tf/toolchains/tfdoc:toolchain.bzl", "tfdoc_download")
+load("@rules_tf//tf/toolchains/tflint:toolchain.bzl", "tflint_download")
+load("@rules_tf//tf/toolchains/tofu:toolchain.bzl", "tofu_download")
 
 def detect_host_platform(ctx):
     os = ctx.os.name
@@ -45,13 +44,13 @@ def _tf_repositories(ctx):
     for module in ctx.modules:
         for index, version_tag in enumerate(module.tags.download):
             tf_repo_name = _repo_name(
-                module=module,
+                module = module,
                 tool = "tf",
                 index = index,
                 suffix = "_{}_{}".format(host_detected_os, host_detected_arch),
             )
             tfdoc_repo_name = _repo_name(
-                module=module,
+                module = module,
                 tool = "tfdoc",
                 index = 0,
                 suffix = "_{}_{}".format(host_detected_os, host_detected_arch),
@@ -66,7 +65,7 @@ def _tf_repositories(ctx):
             tfdoc_toolchains += [tfdoc_repo_name]
 
             tflint_repo_name = _repo_name(
-                module=module,
+                module = module,
                 tool = "tflint",
                 index = 0,
                 suffix = "_{}_{}".format(host_detected_os, host_detected_arch),
@@ -81,7 +80,6 @@ def _tf_repositories(ctx):
 
             tflint_toolchains += [tflint_repo_name]
 
-
             if version_tag.use_tofu:
                 tofu_download(
                     name = tf_repo_name,
@@ -89,6 +87,8 @@ def _tf_repositories(ctx):
                     os = host_detected_os,
                     arch = host_detected_arch,
                     mirror = version_tag.mirror,
+                    cli_pins = version_tag.cli_pins,
+                    provider_pins = version_tag.provider_pins,
                 )
                 tofu_toolchains += [tf_repo_name]
             else:
@@ -98,6 +98,8 @@ def _tf_repositories(ctx):
                     os = host_detected_os,
                     arch = host_detected_arch,
                     mirror = version_tag.mirror,
+                    cli_pins = version_tag.cli_pins,
+                    provider_pins = version_tag.provider_pins,
                 )
                 terraform_toolchains += [tf_repo_name]
 
@@ -117,11 +119,17 @@ _version_tag = tag_class(
         "version": attr.string(mandatory = True),
         "tflint_version": attr.string(default = TFLINT_VERSION),
         "tfdoc_version": attr.string(default = TFDOC_VERSION),
-        # Keyed by "{os}_{arch}", e.g. "darwin_arm64". A platform with no entry
-        # falls back to the release's unpinned checksum file.
         "tflint_sha256": attr.string_dict(),
         "tfdoc_sha256": attr.string_dict(),
         "mirror": attr.string_dict(mandatory = True),
+        "cli_pins": attr.label(
+            allow_single_file = [".json"],
+            doc = "JSON file pinning the CLI: per platform, the URL to fetch and its sha256. Each entry also carries a 'version', cross-checked against the 'version' attribute. Unset, the CLI is fetched from its upstream release host. See the README for the schema.",
+        ),
+        "provider_pins": attr.label(
+            allow_single_file = [".json"],
+            doc = "JSON file pinning provider plugins, keyed by registry address: per platform, the URL to fetch and its sha256. Each entry also carries a 'version', cross-checked against 'mirror'. Unset, the mirror is populated by the 'providers mirror' subprocess. See the README for the schema.",
+        ),
     },
 )
 

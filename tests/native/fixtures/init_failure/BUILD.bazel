@@ -1,0 +1,8 @@
+load("@rules_tf//tf:def.bzl", "tf_module", "tf_test")
+
+tf_module(name = "init_failure")
+
+tf_test(
+    name = "native_test",
+    module = ":module",
+)

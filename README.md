@@ -10,6 +10,50 @@ Because now you can either use "tofu" or "terraform" binary.
 
 ## Getting Started
 
+### Pinning CLI and provider downloads
+
+`tf.download` accepts optional `cli_pins` and `provider_pins` labels. Each JSON
+file maps an artifact name or full provider registry address to a version and
+platform-specific URL and SHA256 digest. When pins are absent, the existing
+release checksum and provider mirror paths remain in use. If an unpinned
+provider mirror fails, repository setup now stops and reports the engine
+diagnostics instead of continuing with an incomplete mirror.
+
+```python
+tf.download(
+    version = "1.12.0",
+    use_tofu = True,
+    mirror = {"null": "hashicorp/null:3.1.1"},
+    cli_pins = "//:cli-pins.json",
+    provider_pins = "//:provider-pins.json",
+)
+```
+
+Each pin file is a JSON object. A CLI pin uses the artifact name, such as
+`tofu`, as its key. A provider pin uses its full registry address, such as
+`registry.opentofu.org/hashicorp/null`. Each value has an exact `version` and a
+`platforms` object keyed by `{os}/{arch}`, such as `linux/amd64`. Each platform
+value has a `url` and a 64-character hexadecimal `sha256` digest.
+
+```json
+{
+  "tofu": {
+    "version": "1.12.0",
+    "platforms": {
+      "linux/amd64": {
+        "url": "https://example.invalid/tofu.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}
+```
+
+Provider pins use the same shape, with the full provider address as the top-level
+key. The version must match the configured provider version. Digests above are
+placeholders, not usable checksums. Pins use public URLs. Configure Bazel's
+downloader to rewrite origins when a proxy or mirror is required.
+
 To import rules_tf in your project, you first need to add it to your `MODULE.bazel` file:
 
 ```python
@@ -65,6 +109,33 @@ register_toolchains(
 ```
 
 ### Using Tf rules
+
+#### Native configuration tests
+
+Use `tf_test` to run the configured engine's native assertions against a private
+copy of the module's declared, package-mapped files. Test inputs, local modules,
+and a root `.terraform.lock.hcl` must be declared through the module mappings.
+The rule initializes with the backend disabled. It is not a cloud security
+sandbox. Native tests can still call provider APIs, so use plan-only or mocked
+tests and do not pass live credentials.
+
+```python
+load("@rules_tf//tf:def.bzl", "tf_module", "tf_test")
+
+tf_module(name = "network")
+tf_test(name = "native_test", module = ":network")
+```
+
+The module package glob includes local test files and a root `.terraform.lock.hcl`.
+Use `data` only for inputs outside that glob, such as files in another package.
+
+Registry modules can still require network access during initialization. Provider
+pins do not pin or checksum remote module downloads. The launcher supports POSIX
+directory runfiles on Linux and macOS.
+
+The native rule and verified acquisition work reuse upstream contributions:
+PR 28 by agentydragon and PR 30 by Sanath Manavarte. The implementation keeps
+the repository's newer TFLint and terraform-docs checksum support.
 
 Once you've imported the rule set, you can then load the tf rules in your `BUILD` files with:
 

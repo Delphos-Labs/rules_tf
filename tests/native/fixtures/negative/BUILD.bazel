@@ -1,0 +1,130 @@
+load("@rules_pkg//pkg:mappings.bzl", "pkg_filegroup", "pkg_files", "pkg_mklink")
+load("@rules_tf//tf:def.bzl", "tf_test")
+load("@rules_tf//tf/rules:tf-module.bzl", "tf_module")
+load(":tree.bzl", "tree")
+
+pkg_files(
+    name = "base",
+    srcs = ["main.tf"],
+    prefix = "negative",
+)
+
+pkg_files(
+    name = "other",
+    srcs = ["other.tf"],
+    prefix = "negative",
+    renames = {"other.tf": "main.tf"},
+)
+
+tf_module(
+    name = "conflict",
+    srcs = ":base",
+    deps = [":other"],
+)
+
+tf_test(
+    name = "conflict_test",
+    module = ":conflict",
+)
+
+pkg_files(
+    name = "escaped",
+    srcs = ["main.tf"],
+    prefix = "../escape",
+)
+
+tf_module(
+    name = "escape",
+    srcs = ":escaped",
+)
+
+tf_test(
+    name = "escape_test",
+    module = ":escape",
+)
+
+pkg_files(
+    name = "child",
+    srcs = ["other.tf"],
+    prefix = "negative/main.tf",
+)
+
+tf_module(
+    name = "ancestor",
+    srcs = ":base",
+    deps = [":child"],
+)
+
+tf_test(
+    name = "ancestor_test",
+    module = ":ancestor",
+)
+
+tree(name = "tree")
+
+pkg_files(
+    name = "tree_files",
+    srcs = [":tree"],
+    prefix = "negative",
+)
+
+tf_module(
+    name = "directory",
+    srcs = ":base",
+    deps = [":tree_files"],
+)
+
+tf_test(
+    name = "directory_test",
+    module = ":directory",
+)
+
+pkg_mklink(
+    name = "link",
+    link_name = "negative/link.tf",
+    target = "main.tf",
+)
+
+pkg_filegroup(
+    name = "links",
+    srcs = [":link"],
+)
+
+tf_module(
+    name = "symlink",
+    srcs = ":base",
+    deps = [":links"],
+)
+
+tf_test(
+    name = "symlink_test",
+    module = ":symlink",
+)
+
+pkg_files(
+    name = "terraform_files",
+    srcs = ["other.tf"],
+    prefix = "negative/.terraform",
+)
+
+tf_module(
+    name = "terraform_dir",
+    srcs = ":base",
+    deps = [":terraform_files"],
+)
+
+tf_test(
+    name = "terraform_dir_test",
+    module = ":terraform_dir",
+)
+
+tf_module(
+    name = "valid",
+    srcs = ":base",
+)
+
+tf_test(
+    name = "invalid_test_directory_test",
+    module = ":valid",
+    test_directory = "../escape",
+)
