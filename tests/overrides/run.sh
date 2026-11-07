@@ -100,7 +100,7 @@ NULL_VERSION="3.1.1"
 RANDOM_VERSION="3.3.2"
 
 PASSED=0
-EXPECTED_CHECKS=19
+EXPECTED_CHECKS=24
 
 info() { echo "== $*"; }
 pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
@@ -474,6 +474,73 @@ expect_failure "version-mismatch" "    mirror = {
     provider_pins = \"//:provider_pins.json\"," \
   "but the build requires 9.9.9" setup_version_mismatch
 
+info "[${ENGINE}] case: version-indexed pins reject a missing requested version"
+setup_missing_requested_version() {
+  cat > "$1/provider_pins.json" <<EOF
+{
+  "${NULL_ADDR}": {
+    "versions": {
+      "3.1.1": {
+        "platforms": {
+          "${PLATFORM}": {"url": "file://${WORK}/origin-a/null.zip", "sha256": "${NULL_SHA}"}
+        }
+      }
+    }
+  }
+}
+EOF
+}
+expect_failure "missing-requested-version" "    mirror = {\"null\": \"hashicorp/null:3.2.3\"},
+    provider_pins = \"//:provider_pins.json\"," \
+  "has no version 3.2.3. Available versions: 3.1.1" setup_missing_requested_version
+
+info "[${ENGINE}] case: provider version maps are rejected for CLI pins"
+setup_cli_versions() {
+  cat > "$1/cli_pins.json" <<EOF
+{
+  "${CLI_DIR}": {
+    "versions": {
+      "${VERSION}": {
+        "platforms": {
+          "${PLATFORM}": {"url": "file://${WORK}/cli.zip", "sha256": "${CLI_SHA}"}
+        }
+      }
+    }
+  }
+}
+EOF
+}
+expect_failure "cli-version-map" "    mirror = {\"null\": \"hashicorp/null:3.1.1\"},
+    cli_pins = \"//:cli_pins.json\"," \
+  "must be an object with a 'platforms' field" setup_cli_versions
+
+info "[${ENGINE}] case: provider versions reject mixed legacy fields"
+setup_mixed_provider_versions() {
+  cat > "$1/provider_pins.json" <<EOF
+{
+  "${NULL_ADDR}": {
+    "version": "${NULL_VERSION}",
+    "versions": {"${NULL_VERSION}": {"platforms": {}}}
+  }
+}
+EOF
+}
+expect_failure "mixed-provider-version-map" "    mirror = {\"null\": \"hashicorp/null:${NULL_VERSION}\"},
+    provider_pins = \"//:provider_pins.json\"," \
+  "cannot combine 'versions' with 'version' or 'platforms'" setup_mixed_provider_versions
+
+info "[${ENGINE}] case: provider versions map must not be empty"
+setup_empty_provider_versions() {
+  cat > "$1/provider_pins.json" <<EOF
+{
+  "${NULL_ADDR}": {"versions": {}}
+}
+EOF
+}
+expect_failure "empty-provider-version-map" "    mirror = {\"null\": \"hashicorp/null:${NULL_VERSION}\"},
+    provider_pins = \"//:provider_pins.json\"," \
+  "has an empty or non-object 'versions' map" setup_empty_provider_versions
+
 info "[${ENGINE}] case: provider in the mirror dictionary is absent from the pins"
 setup_missing_entry() {
   { echo "{"; pin_entry "${NULL_ADDR}" "${NULL_VERSION}" "file://${WORK}/origin-a/null.zip" "${NULL_SHA}"; echo "}"; } \
@@ -589,6 +656,71 @@ setup_wrapped() {
 ISOLATE_CACHE=1 expect_failure "wrapped-cli-archive" "    mirror = {\"null\": \"hashicorp/null:3.1.1\"},
     cli_pins = \"//:cli_pins.json\"," \
   "does not contain the expected layout" setup_wrapped
+
+info "[${ENGINE}] case: two locked roots select different pinned versions"
+MULTI_DIR="${WORK}/multi-version"
+make_module "${MULTI_DIR}" '    mirror = {
+        "null_old": "hashicorp/null:3.1.1",
+        "null_new": "hashicorp/null:3.2.3",
+        "random": "hashicorp/random:3.3.2",
+    },
+    provider_pins = "//:provider_pins.json",'
+CLI="${SRC_REPO}/${CLI_DIR}/${CLI_DIR}"
+mkdir -p "${WORK}/new-release" "${WORK}/independent-mirror"
+cat >"${WORK}/new-release/main.tf" <<'EOF'
+terraform {
+  required_providers {
+    null = { source = "hashicorp/null", version = "= 3.2.3" }
+  }
+}
+resource "null_resource" "probe" {}
+EOF
+"${CLI}" -chdir="${WORK}/new-release" providers mirror "${WORK}/independent-mirror"
+NEW_ZIP="${WORK}/independent-mirror/${REGISTRY}/hashicorp/null/terraform-provider-null_3.2.3_${host_os}_${host_arch}.zip"
+[ -f "${NEW_ZIP}" ] || fail "independently acquired null 3.2.3 archive missing"
+NEW_SHA="$(sha256_of "${NEW_ZIP}")"
+python3 - "${MULTI_DIR}/provider_pins.json" "${NULL_ADDR}" "${RANDOM_ADDR}" "${PLATFORM}" "${WORK}" "${NULL_SHA}" "${NEW_ZIP}" "${NEW_SHA}" "${RANDOM_SHA}" <<'PY'
+import json
+import sys
+path, address, random, platform, work, old_sha, new_zip, new_sha, random_sha = sys.argv[1:]
+def release(url, digest):
+    return {"platforms": {platform: {"url": "file://" + url, "sha256": digest}}}
+pins = {
+    address: {"versions": {
+        "3.1.1": release(work + "/origin-a/null.zip", old_sha),
+        "3.2.3": release(new_zip, new_sha),
+    }},
+    random: {"version": "3.3.2", **release(work + "/origin-b/random.zip", random_sha)},
+}
+with open(path, "w") as output:
+    json.dump(pins, output)
+PY
+for release in 3.1.1 3.2.3; do
+  root="${MULTI_DIR}/root-${release}"
+  mkdir -p "${root}"
+  sed "s/3.2.3/${release}/" "${WORK}/new-release/main.tf" >"${root}/main.tf"
+  "${CLI}" -chdir="${root}" init -backend=false -input=false -plugin-dir="${SRC_REPO}/mirror" -plugin-dir="${WORK}/independent-mirror"
+  cp "${root}/.terraform.lock.hcl" "${WORK}/${release}.lock"
+  find "${root}/.terraform" -type d -exec chmod u+w {} +
+  rm -rf "${root}/.terraform"
+  cat >"${root}/BUILD.bazel" <<'EOF'
+load("@rules_tf//tf:def.bzl", "tf_module")
+tf_module(name = "root")
+EOF
+done
+(cd "${MULTI_DIR}" && bazel test //root-3.1.1:validate //root-3.2.3:validate) \
+  || fail "two-version pinned toolchain cannot validate both locked roots"
+MULTI_REPO="$(find_tf_repo "${MULTI_DIR}")"
+for release in 3.1.1 3.2.3; do
+  root="${MULTI_DIR}/root-${release}"
+  [ -f "${MULTI_REPO}/mirror/${REGISTRY}/hashicorp/null/terraform-provider-null_${release}_${host_os}_${host_arch}.zip" ] \
+    || fail "pinned mirror lost null ${release}"
+  "${CLI}" -chdir="${root}" init -backend=false -input=false -lockfile=readonly -plugin-dir="${MULTI_REPO}/mirror"
+  "${CLI}" -chdir="${root}" validate
+  cmp "${WORK}/${release}.lock" "${root}/.terraform.lock.hcl" || fail "validation changed root lock ${release}"
+done
+shutdown_bazel "${MULTI_DIR}"
+pass "[${ENGINE}] version-indexed null releases coexist with legacy random pins and readonly root locks"
 
 # A check that is deleted, renamed away or short-circuited by an early return
 # would otherwise leave the run green with a smaller number that nobody reads.

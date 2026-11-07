@@ -50,7 +50,7 @@ test_bad() {
   has "${LOGS}/${ENGINE}-${name}.log" "${expected}"
 }
 snapshot() {
-  (cd "${ACTIVE}" && find basic assertion_failure init_failure locks mapped custom missing_input external_module -type f | LC_ALL=C sort | while IFS= read -r file; do
+  (cd "${ACTIVE}" && find basic assertion_failure init_failure locks mapped custom missing_input external_module validation -type f | LC_ALL=C sort | while IFS= read -r file; do
     printf '%s %s\n' "$(sha "${file}")" "${file}"
   done)
 }
@@ -85,10 +85,12 @@ register_toolchains("@tf_toolchains//:all")
 EOF
   cat >"${ACTIVE}/BUILD.bazel" <<EOF
 load("@rules_tf//tf:def.bzl", "tf_module", "tf_test")
+load("@rules_tf//tf/rules:tf-module.bzl", "tf_validate_test")
 alias(name = "engine", actual = "@tf_toolchains//:${ENGINE}")
 tf_module(name = "root")
 tf_test(name = "root_test", module = ":module")
 tf_test(name = "external_test", module = "@external_module//:external")
+tf_validate_test(name = "external_validate", module = "@external_module//:module")
 EOF
   cp "${ACTIVE}/basic/main.tf" "${ACTIVE}/main.tf"
   mkdir -p "${ACTIVE}/tests" "${ACTIVE}/external_module/tests"
@@ -102,6 +104,7 @@ EOF
   touch "${ACTIVE}/external_module/WORKSPACE" "${ACTIVE}/external_module/WORKSPACE.bzlmod"
   cat >"${ACTIVE}/external_module/BUILD.bazel" <<'EOF'
 load("@rules_tf//tf:def.bzl", "tf_module")
+package(default_visibility = ["//visibility:public"])
 tf_module(name = "external")
 EOF
 
@@ -130,12 +133,24 @@ EOF
   test_bad forwarded-args 'flag provided but not defined' //basic:forwarded_args_test
   test_ok root declared_answer //:root_test //:external_test
   test_ok mappings mapped_closure //mapped:native_test
+  test_bad validation-semantic 'Reference to undeclared resource' //validation:validate
+  test_ok validation-mapped 'configuration is valid' //mapped:validate_test
+  test_ok validation-basic 'configuration is valid' //basic:validate //:validate //:external_validate
   test_ok custom custom_directory //custom:native_test
   test_bad assertion NATIVE_EXPECTED_FAILURE //assertion_failure:native_test
   test_bad init 'hashicorp/random' //init_failure:native_test
   if grep -qE 'must_not_execute|NATIVE_INIT_DID_NOT_STOP' "${LOGS}/${ENGINE}-init.log"; then
     fail "native test ran after failed initialization"
   fi
+  test_bad validation-init 'hashicorp/random' --run_under='bash -x' //init_failure:validate
+  grep -Eq "^[+].*/${ENGINE} init([[:space:]]|$)" "${LOGS}/${ENGINE}-validation-init.log" \
+    || fail "initialization-stop proof has no traced engine initialization"
+  if grep -E '^[+].*exec .* validate([[:space:]]|$)' "${LOGS}/${ENGINE}-validation-init.log"; then
+    fail "validation ran after failed initialization"
+  fi
+  test_ok validation-trace 'configuration is valid' --run_under='bash -x' //basic:validate
+  grep -Eq '^[+].*exec .* validate([[:space:]]|$)' "${LOGS}/${ENGINE}-validation-trace.log" \
+    || fail "successful validation control has no traced engine validation"
   test_bad undeclared undeclared.txt //missing_input:native_test
   test_bad analysis-conflict 'conflicting destination' //negative:conflict_test
   test_bad analysis-escape 'escapes' //negative:escape_test
@@ -143,8 +158,15 @@ EOF
   test_bad analysis-directory 'directory artifact' //negative:directory_test
   test_bad analysis-symlink 'symlink entries' //negative:symlink_test
   test_bad analysis-terraform-dir '.terraform path' //negative:terraform_dir_test
+  test_bad validation-conflict 'conflicting destination' //negative:conflict_validate
+  test_bad validation-escape 'escapes' //negative:escape_validate
+  test_bad validation-ancestor 'ancestor of' //negative:ancestor_validate
+  test_bad validation-directory 'directory artifact' //negative:directory_validate
+  test_bad validation-symlink 'symlink entries' //negative:symlink_validate
+  test_bad validation-terraform-dir '.terraform path' //negative:terraform_dir_validate
    test_bad invalid-test-directory 'tf_test test_directory must be relative and must not contain parent traversal' //negative:invalid_test_directory_test
   test_ok lock locked_answer //locks:native_test
+  test_ok validation-lock 'configuration is valid' //locks:validate
   cat >"${WORK}/host.tfrc" <<'EOF'
 provider_installation {
   dev_overrides {
@@ -154,9 +176,10 @@ provider_installation {
 }
 EOF
   test_ok environment locked_answer --test_env="TF_CLI_CONFIG_FILE=${WORK}/host.tfrc" --test_env=TF_CLI_ARGS_test=-invalid-flag --test_env=TF_CLI_ARGS_init=-invalid-flag --test_env=TF_DATA_DIR=/unwritable --test_env=TF_PLUGIN_CACHE_DIR=/unwritable //locks:native_test
+  test_ok validation-environment 'configuration is valid' --test_env="TF_CLI_CONFIG_FILE=${WORK}/host.tfrc" --test_env=TF_CLI_ARGS=-invalid-flag --test_env=TF_CLI_ARGS_validate=-invalid-flag --test_env=TF_CLI_ARGS_init=-invalid-flag --test_env=TF_DATA_DIR=/unwritable --test_env=TF_PLUGIN_CACHE_DIR=/unwritable --test_env=TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true //locks:validate
   snapshot >"${WORK}/after"
   cmp "${WORK}/before" "${WORK}/after" || fail "native tests modified input files"
-  [ -z "$(find "${ACTIVE}/basic" "${ACTIVE}/locks" -name .terraform -print)" ] || fail "native test initialized checkout"
+  [ -z "$(find "${ACTIVE}" -name .terraform -print)" ] || fail "native test initialized checkout"
 
   # Normal test caching stays enabled during every mutation.
   sed 's/value = 7/value = 8/' "${ROOT}/tests/native/fixtures/basic/main.tf" >"${ACTIVE}/basic/main.tf"
@@ -171,11 +194,14 @@ EOF
   cp "${ROOT}/tests/native/fixtures/mapped/BUILD.bazel" "${ACTIVE}/mapped/BUILD.bazel"
   sed -E 's/(h1:|zh:)[A-Za-z0-9+\/=]+/zh:0000000000000000000000000000000000000000000000000000000000000000/g' "${WORK}/${ENGINE}-valid.lock" >"${ACTIVE}/locks/.terraform.lock.hcl"
   test_bad changed-lock checksums //locks:native_test
+  test_bad validation-changed-lock checksums //locks:validate
   sed 's/3.1.1/3.0.0/g' "${WORK}/${ENGINE}-valid.lock" >"${ACTIVE}/locks/.terraform.lock.hcl"
    test_bad incompatible-lock 'locked provider' //locks:native_test
+  test_bad validation-incompatible-lock 'locked provider' //locks:validate
   cp "${WORK}/${ENGINE}-valid.lock" "${ACTIVE}/locks/.terraform.lock.hcl"
   mv "${ACTIVE}/locks/.terraform.lock.hcl" "${WORK}/${ENGINE}-removed.lock"
   test_ok absent-lock locked_answer //locks:native_test
+  test_ok validation-absent-lock 'configuration is valid' //locks:validate
   [ ! -e "${ACTIVE}/locks/.terraform.lock.hcl" ] || fail 'native test wrote a source lock'
   mv "${WORK}/${ENGINE}-removed.lock" "${ACTIVE}/locks/.terraform.lock.hcl"
   snapshot >"${WORK}/restored"

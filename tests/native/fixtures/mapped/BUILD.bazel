@@ -1,6 +1,6 @@
 load("@rules_pkg//pkg:mappings.bzl", "pkg_filegroup", "pkg_files")
 load("@rules_tf//tf:def.bzl", "tf_test")
-load("@rules_tf//tf/rules:tf-module.bzl", "tf_module")
+load("@rules_tf//tf/rules:tf-module.bzl", "tf_module", "tf_validate_test")
 
 genrule(
     name = "generated",
@@ -79,5 +79,10 @@ tf_module(
 
 tf_test(
     name = "native_test",
+    module = ":module",
+)
+
+tf_validate_test(
+    name = "validate_test",
     module = ":module",
 )

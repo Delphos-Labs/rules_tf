@@ -1,6 +1,6 @@
 load("@rules_pkg//pkg:mappings.bzl", "pkg_filegroup", "pkg_files", "pkg_mklink")
 load("@rules_tf//tf:def.bzl", "tf_test")
-load("@rules_tf//tf/rules:tf-module.bzl", "tf_module")
+load("@rules_tf//tf/rules:tf-module.bzl", "tf_module", "tf_validate_test")
 load(":tree.bzl", "tree")
 
 pkg_files(
@@ -128,3 +128,10 @@ tf_test(
     module = ":valid",
     test_directory = "../escape",
 )
+
+tf_validate_test(name = "conflict_validate", module = ":conflict")
+tf_validate_test(name = "escape_validate", module = ":escape")
+tf_validate_test(name = "ancestor_validate", module = ":ancestor")
+tf_validate_test(name = "directory_validate", module = ":directory")
+tf_validate_test(name = "symlink_validate", module = ":symlink")
+tf_validate_test(name = "terraform_dir_validate", module = ":terraform_dir")

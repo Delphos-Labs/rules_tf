@@ -3,6 +3,7 @@ load("@rules_tf//tf/rules:providers.bzl", "TfArtifactInfo")
 load("@rules_pkg//pkg:providers.bzl", "PackageArtifactInfo")
 load("@rules_pkg//pkg:providers.bzl", "PackageFilesInfo")
 load("@rules_pkg//pkg:providers.bzl", "PackageFilegroupInfo")
+load("@rules_tf//tf/rules:tf-staging.bzl", "collect_module_files", "staged_test")
 load("@bazel_skylib//lib:paths.bzl", "paths")
 
 def _artifact_impl(ctx):
@@ -141,34 +142,15 @@ tf_module_deps = rule(
 )
 
 def _tf_validate_impl(ctx):
-    tf_runtime = ctx.toolchains["@rules_tf//:tf_toolchain_type"].runtime
-
-    cmd = "{tf} -chdir={dir} init -backend=false -input=false -plugin-dir=$PWD/{plugins_mirror} > /dev/null; {tf} -chdir={dir} validate".format(
-        dir = ctx.attr.module.label.package,
-        tf = tf_runtime.tf.short_path,
-        plugins_mirror = tf_runtime.mirror.short_path,
-    )
-
-    ctx.actions.write(
-        output = ctx.outputs.executable,
-        content = cmd,
-    )
-
-    deps = ctx.attr.module[TfModuleInfo].transitive_srcs.to_list() + tf_runtime.deps
-
-    return [DefaultInfo(
-        runfiles = ctx.runfiles(files = deps),
-    )]
+    return staged_test(ctx, "validate")
 
 tf_validate_test = rule(
     implementation = _tf_validate_impl,
     attrs = {
-        "module": attr.label(providers = [TfModuleInfo], allow_files = True),
+        "module": attr.label(providers = [TfModuleInfo], allow_files = True, aspects = [collect_module_files]),
     },
     test = True,
-    toolchains = [
-        "@rules_tf//:tf_toolchain_type",
-    ],
+    toolchains = ["@rules_tf//:tf_toolchain_type"],
 )
 
 
