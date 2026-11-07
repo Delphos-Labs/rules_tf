@@ -1,0 +1,23 @@
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files")
+load("@rules_tf//tf:def.bzl", "tf_test")
+load("@rules_tf//tf/rules:tf-module.bzl", "tf_module")
+
+pkg_files(
+    name = "declared",
+    srcs = [
+        "main.tf",
+        "tests/answer.tftest.hcl",
+    ],
+    prefix = "missing_input",
+    strip_prefix = "",
+)
+
+tf_module(
+    name = "module",
+    srcs = ":declared",
+)
+
+tf_test(
+    name = "native_test",
+    module = ":module",
+)

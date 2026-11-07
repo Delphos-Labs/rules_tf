@@ -1,0 +1,20 @@
+load("@rules_tf//tf:def.bzl", "tf_module", "tf_test")
+
+tf_module(name = "basic")
+
+tf_test(
+    name = "native_test",
+    args = ["-no-color"],
+    module = ":basic",
+)
+
+tf_test(
+    name = "concurrent_test",
+    module = ":module",
+)
+
+tf_test(
+    name = "forwarded_args_test",
+    args = ["-definitely-not-a-real-test-flag"],
+    module = ":basic",
+)

@@ -1,10 +1,13 @@
-load("@rules_pkg//pkg:pkg.bzl", "pkg_tar")
 load("@rules_pkg//pkg:mappings.bzl", "pkg_files")
-load("@rules_tf//tf/rules:tf-gen-doc.bzl", _tf_gen_doc = "tf_gen_doc" )
+load("@rules_pkg//pkg:pkg.bzl", "pkg_tar")
+load("@rules_tf//tf/rules:tf-gen-doc.bzl", _tf_gen_doc = "tf_gen_doc")
 load("@rules_tf//tf/rules:tf-gen-versions.bzl", "tf_gen_versions")
-load("@rules_tf//tf/rules:tf-providers-versions.bzl", _tf_providers_versions = "tf_providers_versions")
 load("@rules_tf//tf/rules:tf-lint.bzl", "tf_lint_test")
-load("@rules_tf//tf/rules:tf-module.bzl", _tf_module = "tf_module", "tf_module_deps", "tf_artifact", "tf_validate_test", _tf_format = "tf_format", "tf_format_test")
+load("@rules_tf//tf/rules:tf-module.bzl", "tf_artifact", "tf_format_test", "tf_module_deps", "tf_validate_test", _tf_format = "tf_format", _tf_module = "tf_module")
+load("@rules_tf//tf/rules:tf-providers-versions.bzl", _tf_providers_versions = "tf_providers_versions")
+load("@rules_tf//tf/rules:tf-test.bzl", _tf_test = "tf_test")
+
+tf_test = _tf_test
 
 bzl_files = [
     "**/*.bzl",
@@ -13,23 +16,23 @@ bzl_files = [
     "**/BUILD",
 ]
 
-def tf_module(name,
-              providers_versions = None,
-              data = [],
-              size="small",
-              providers = [],
-              tflint_config = None,
-              tflint_extra_args = [],
-              deps = [],
-              experiments = [],
-              visibility= ["//visibility:public"],
-              tags = [],
-              skip_validation = False):
-
+def tf_module(
+        name,
+        providers_versions = None,
+        data = [],
+        size = "small",
+        providers = [],
+        tflint_config = None,
+        tflint_extra_args = [],
+        deps = [],
+        experiments = [],
+        visibility = ["//visibility:public"],
+        tags = [],
+        skip_validation = False):
     # Handle both string list and dict formats for providers
     providers_list = []
     providers_dict_json = ""
-    
+
     if type(providers) == type([]):
         # String list format (legacy)
         providers_list = providers
@@ -43,7 +46,7 @@ def tf_module(name,
         name = "gen-tf-versions",
         providers = providers_list,
         providers_dict_json = providers_dict_json,
-        providers_versions  = providers_versions,
+        providers_versions = providers_versions,
         experiments = experiments,
         visibility = visibility,
         tags = tags,
@@ -51,8 +54,8 @@ def tf_module(name,
 
     pkg_files(
         name = "srcs",
-        srcs = native.glob(["**/*"], exclude=bzl_files) + data,
-        strip_prefix = "", # this is important to preserve directory structure
+        srcs = native.glob(["**/*"], exclude = bzl_files) + data,
+        strip_prefix = "",  # this is important to preserve directory structure
         prefix = native.package_name(),
         tags = tags,
         visibility = visibility,
@@ -95,13 +98,12 @@ def tf_module(name,
             tags = tags,
         )
 
-
     pkg_tar(
         name = "tgz",
-        srcs = [ ":module", ":deps"],
+        srcs = [":module", ":deps"],
         out = "{}.tar.gz".format(name),
         extension = "tar.gz",
-        strip_prefix = ".", # this is important to preserve directory structure
+        strip_prefix = ".",  # this is important to preserve directory structure
         tags = tags,
     )
 
@@ -112,7 +114,6 @@ def tf_module(name,
         visibility = ["//visibility:public"],
         tags = tags,
     )
-
 
 def tf_format(name, modules, **kwargs):
     _tf_format(

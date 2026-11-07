@@ -1,0 +1,83 @@
+load("@rules_pkg//pkg:mappings.bzl", "pkg_filegroup", "pkg_files")
+load("@rules_tf//tf:def.bzl", "tf_test")
+load("@rules_tf//tf/rules:tf-module.bzl", "tf_module")
+
+genrule(
+    name = "generated",
+    outs = ["generated.tf"],
+    cmd = "echo 'output \"answer\" { value = 7 }' > $@",
+)
+
+pkg_files(
+    name = "leaf_srcs",
+    srcs = [":generated"],
+    prefix = "mapped/leaf",
+    renames = {":generated": "main.tf"},
+)
+
+tf_module(
+    name = "leaf",
+    srcs = ":leaf_srcs",
+)
+
+pkg_files(
+    name = "middle_srcs",
+    srcs = ["middle.tf"],
+    prefix = "mapped/middle",
+    renames = {"middle.tf": "main.tf"},
+)
+
+tf_module(
+    name = "middle",
+    srcs = ":middle_srcs",
+    deps = [":leaf"],
+)
+
+pkg_files(
+    name = "parent_srcs",
+    srcs = ["parent.tf"],
+    prefix = "mapped/parent",
+    renames = {"parent.tf": "main.tf"},
+)
+
+tf_module(
+    name = "parent",
+    srcs = ":parent_srcs",
+    deps = [":middle"],
+)
+
+pkg_files(
+    name = "root_srcs",
+    srcs = [
+        "root.tf",
+        "tests/answer.tftest.hcl",
+    ],
+    prefix = "mapped",
+    renames = {"root.tf": "main.tf"},
+    strip_prefix = "",
+)
+
+pkg_files(
+    name = "text",
+    srcs = ["value.txt"],
+    prefix = "mapped/data",
+)
+
+pkg_filegroup(
+    name = "group",
+    srcs = [":text"],
+)
+
+tf_module(
+    name = "module",
+    srcs = ":root_srcs",
+    deps = [
+        ":group",
+        ":parent",
+    ],
+)
+
+tf_test(
+    name = "native_test",
+    module = ":module",
+)

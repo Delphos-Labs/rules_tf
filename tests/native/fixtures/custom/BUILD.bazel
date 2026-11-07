@@ -1,0 +1,9 @@
+load("@rules_tf//tf:def.bzl", "tf_module", "tf_test")
+
+tf_module(name = "custom")
+
+tf_test(
+    name = "native_test",
+    module = ":module",
+    test_directory = "checks",
+)
