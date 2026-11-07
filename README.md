@@ -129,6 +129,50 @@ tf_test(name = "native_test", module = ":network")
 The module package glob includes local test files and a root `.terraform.lock.hcl`.
 Use `data` only for inputs outside that glob, such as files in another package.
 
+The macro also includes local `.terraform` initialization output. `tf_test`
+rejects these paths instead of using cached providers or state from your checkout.
+For initialized modules, declare the inputs explicitly with `pkg_files` and the
+low-level module rule. Keep the lock file, tests, templates, and local dependencies
+in the declared inputs.
+
+For Bzlmod, add `bazel_dep(name = "rules_pkg", version = "0.9.1")` to
+`MODULE.bazel` so the example can load `@rules_pkg` directly.
+
+```python
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files")
+load("@rules_tf//tf:def.bzl", "tf_test")
+load("@rules_tf//tf/rules:tf-module.bzl", native_module = "tf_module")
+
+pkg_files(
+    name = "native_sources",
+    srcs = glob(
+        ["**/*"],
+        exclude = [
+            ".terraform/**",
+            "**/.terraform/**",
+            "BUILD",
+            "BUILD.bazel",
+            "**/*.bzl",
+        ],
+    ),
+    prefix = package_name(),
+    strip_prefix = "",
+)
+
+native_module(
+    name = "native_module",
+    srcs = ":native_sources",
+)
+
+tf_test(
+    name = "native_test",
+    module = ":native_module",
+)
+```
+
+Declare local module dependencies through `native_module`'s `deps` attribute.
+The explicit route does not change existing macro packaging or validation behavior.
+
 Registry modules can still require network access during initialization. Provider
 pins do not pin or checksum remote module downloads. The launcher supports POSIX
 directory runfiles on Linux and macOS.

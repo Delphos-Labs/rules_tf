@@ -41,7 +41,32 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FIXTURE_TF="${REPO_ROOT}/tests/bcr/tf"
 WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+touch "${WORK}/workspaces"
+bazel() { command bazel --output_user_root="${WORK}/bazel-output" "$@"; }
+shutdown_bazel() {
+  (cd "$1" && bazel shutdown) && touch "$1/.bazel-stopped"
+}
+cleanup() {
+  local status=$? dir failed=0
+  while IFS= read -r dir; do
+    if [ ! -f "${dir}/.bazel-stopped" ]; then
+      shutdown_bazel "${dir}" || failed=1
+    fi
+  done <"${WORK}/workspaces"
+  if [ "${failed}" -eq 0 ]; then
+    if ! find "${WORK}" -type d -exec chmod u+w {} + || ! rm -rf "${WORK}"; then
+      echo "Cleanup failed. Retained test storage: ${WORK}" >&2
+      status=1
+    fi
+  else
+    echo "Bazel shutdown failed. Retained test storage: ${WORK}" >&2
+    status=1
+  fi
+  exit "${status}"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Pins are per-platform, because each platform has its own artefact and
 # therefore its own digest. Derive the key for this host the same way
@@ -103,8 +128,9 @@ sha256_of() {
 make_module() {
   local dir="$1" attrs="$2" cache="${WORK}/rcache"
   mkdir -p "${dir}"
+  printf '%s\n' "${dir}" >>"${WORK}/workspaces"
   if [ "${ISOLATE_CACHE:-0}" = "1" ]; then
-    cache="${dir}/rcache"
+    cache="${WORK}/isolated-caches/$(basename "${dir}")"
   fi
   cp -R "${FIXTURE_TF}" "${dir}/tf"
   # Bazel 6 locates the workspace root via WORKSPACE rather than MODULE.bazel.
@@ -147,8 +173,6 @@ use_repo(tf, "tf_toolchains")
 register_toolchains("@tf_toolchains//:all")
 EOF
 }
-
-shutdown_bazel() { (cd "$1" && bazel shutdown >/dev/null 2>&1) || true; }
 
 # Locates the generated toolchain repository. The canonical repository name is
 # mangled differently across Bazel versions ("~" before Bazel 8, "+" after), so
@@ -251,11 +275,22 @@ RANDOM_SHA="$(sha256_of "${random_zip}")"
 
 # The CLI archive is packed from *inside* the directory so that its contents
 # sit at the archive root, which is the layout the pinned path expects.
-(cd "${SRC_REPO}/${CLI_DIR}" && zip -qr "${WORK}/cli.zip" .)
 # A copy packed one level too deep, i.e. the containing directory was zipped
 # instead of its contents. This is the layout mistake the post-extraction guard
 # exists to catch.
-(cd "${SRC_REPO}" && zip -qr "${WORK}/wrapped_cli.zip" "${CLI_DIR}")
+python3 - "${SRC_REPO}" "${CLI_DIR}" "${WORK}" <<'PY'
+from pathlib import Path
+import sys
+from zipfile import ZipFile, ZIP_DEFLATED
+
+repository, cli_dir, work = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+source = repository / cli_dir
+for name, base in [("cli.zip", source), ("wrapped_cli.zip", repository)]:
+    with ZipFile(work / name, "w", compression=ZIP_DEFLATED) as archive:
+        for file in sorted(source.rglob("*")):
+            if file.is_file():
+                archive.write(file, file.relative_to(base))
+PY
 shutdown_bazel "${DEFAULT_DIR}"
 
 CLI_SHA="$(sha256_of "${WORK}/cli.zip")"

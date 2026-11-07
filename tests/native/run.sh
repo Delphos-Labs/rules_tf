@@ -3,19 +3,29 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+python3 -B "${ROOT}/tests/native/check_actions_test.py"
 WORK="$(mktemp -d)"
 LOGS="${RULES_TF_TEST_LOGS:-${ROOT}/.local/native-logs}"
 mkdir -p "${LOGS}"
 ACTIVE=""
+bazel() { command bazel --output_user_root="${WORK}/bazel-output" "$@"; }
 cleanup() {
   local status=$?
   if [ -n "${ACTIVE}" ]; then
-    (cd "${ACTIVE}" && bazel shutdown) || status=1
+    if ! (cd "${ACTIVE}" && bazel shutdown); then
+      echo "Bazel shutdown failed. Retained test storage: ${WORK}" >&2
+      exit 1
+    fi
   fi
-  rm -rf "${WORK}"
+  if ! find "${WORK}" -type d -exec chmod u+w {} + || ! rm -rf "${WORK}"; then
+    echo "Cleanup failed. Retained test storage: ${WORK}" >&2
+    status=1
+  fi
   exit "${status}"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 has() { grep -qF -- "$2" "$1" || fail "$1 does not contain $2"; }
@@ -172,10 +182,8 @@ EOF
   cmp "${WORK}/before" "${WORK}/restored" || fail "mutation restoration failed"
   test_ok restored declared_answer //basic:native_test
 
-  bzl aquery 'deps(//basic:native_test)' --output=textproto >"${LOGS}/${ENGINE}-actions.txt"
-  if grep -E 'mnemonic: ".*(Compile|Link)' "${LOGS}/${ENGINE}-actions.txt"; then
-    fail "native test unexpectedly compiles a helper"
-  fi
+  bzl aquery 'deps(//basic:native_test)' --output=jsonproto >"${LOGS}/${ENGINE}-actions.json"
+  python3 "${ROOT}/tests/native/check_actions.py" "${LOGS}/${ENGINE}-actions.json"
 
   # Registry access is a distinct qualification, never a passing local case.
   if [ "${ENGINE}" = tofu ]; then
