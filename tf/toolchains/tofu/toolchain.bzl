@@ -56,28 +56,31 @@ def _pin_for_platform(ctx, attr_name, pins, key, want_version):
             present = ", ".join(sorted(pins.keys())) if pins else "none",
         ))
 
-    if type(entry) != "dict" or "platforms" not in entry:
-        fail("tofu_download: '{attr}' entry '{key}' must be an object with a 'platforms' field.".format(
-            attr = attr_name,
-            key = key,
-        ))
+    if type(entry) != "dict":
+        fail("tofu_download: '{attr}' entry '{key}' must be an object.".format(attr = attr_name, key = key))
 
-    # 'version' is what stops the pins drifting from the rest of the build, so a
-    # missing one is reported as the structural error it is rather than as a
-    # mismatch against a version the user cannot find in the file.
+    if attr_name == "provider_pins" and "versions" in entry:
+        if "version" in entry or "platforms" in entry:
+            fail("tofu_download: '{attr}' entry '{key}' cannot combine 'versions' with 'version' or 'platforms'.".format(attr = attr_name, key = key))
+        versions = entry["versions"]
+        if type(versions) != "dict" or not versions:
+            fail("tofu_download: '{attr}' entry '{key}' has an empty or non-object 'versions' map.".format(attr = attr_name, key = key))
+        selected = versions.get(want_version)
+        if selected == None:
+            fail("tofu_download: '{attr}' entry '{key}' has no version {want}. Available versions: {available}.".format(attr = attr_name, key = key, want = want_version, available = ", ".join(sorted(versions.keys()))) )
+        if type(selected) != "dict" or "platforms" not in selected:
+            fail("tofu_download: '{attr}' entry '{key}' version {want} must be an object with a 'platforms' field.".format(attr = attr_name, key = key, want = want_version))
+        if "version" in selected or "versions" in selected:
+            fail("tofu_download: '{attr}' entry '{key}' version {want} cannot declare nested versions.".format(attr = attr_name, key = key, want = want_version))
+        entry = {"version": want_version, "platforms": selected["platforms"]}
+    elif "platforms" not in entry:
+        fail("tofu_download: '{attr}' entry '{key}' must be an object with a 'platforms' field.".format(attr = attr_name, key = key))
+
     if type(entry.get("version")) != "string":
-        fail("tofu_download: '{attr}' entry '{key}' is missing a string 'version' field.".format(
-            attr = attr_name,
-            key = key,
-        ))
+        fail("tofu_download: '{attr}' entry '{key}' is missing a string 'version' field.".format(attr = attr_name, key = key))
 
     if entry.get("version") != want_version:
-        fail("tofu_download: '{attr}' pins '{key}' at version {have}, but the build requires {want}. ".format(
-            attr = attr_name,
-            key = key,
-            have = entry.get("version"),
-            want = want_version,
-        ) + "Regenerate the pins file.")
+        fail("tofu_download: '{attr}' pins '{key}' at version {have}, but the build requires {want}. ".format(attr = attr_name, key = key, have = entry.get("version"), want = want_version) + "Regenerate the pins file.")
 
     platform = _platform_key(ctx)
     platforms = entry["platforms"]
@@ -333,7 +336,7 @@ tofu_download = repository_rule(
         ),
         "provider_pins": attr.label(
             allow_single_file = [".json"],
-            doc = "JSON file pinning provider plugins, keyed by registry address: per platform, the URL to fetch and its sha256. Each entry also carries a 'version', cross-checked against 'mirror'. Unset, the mirror is populated by the 'providers mirror' subprocess. See the README for the schema.",
+            doc = "JSON file pinning provider plugins by registry address and exact version, with per-platform URLs and SHA256 digests. Legacy single-version entries remain supported. Unset, the mirror is populated by the 'providers mirror' subprocess. See the README for the schema.",
         ),
     },
 )

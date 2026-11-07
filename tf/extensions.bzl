@@ -128,7 +128,7 @@ _version_tag = tag_class(
         ),
         "provider_pins": attr.label(
             allow_single_file = [".json"],
-            doc = "JSON file pinning provider plugins, keyed by registry address: per platform, the URL to fetch and its sha256. Each entry also carries a 'version', cross-checked against 'mirror'. Unset, the mirror is populated by the 'providers mirror' subprocess. See the README for the schema.",
+            doc = "JSON file pinning provider plugins by registry address and exact version, with per-platform URLs and SHA256 digests. Legacy single-version entries remain supported. Unset, the mirror is populated by the 'providers mirror' subprocess. See the README for the schema.",
         ),
     },
 )
