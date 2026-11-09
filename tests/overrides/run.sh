@@ -28,6 +28,7 @@ case "${ENGINE}" in
     USE_TOFU="True"
     VERSION="1.9.0"
     CLI_DIR="tofu"
+    EXPECTED_CHECKS=30
     # OpenTofu uses a different registry, so the mirror path differs from
     # terraform's even though the zip file names are identical.
     REGISTRY="registry.opentofu.org"
@@ -100,7 +101,7 @@ NULL_VERSION="3.1.1"
 RANDOM_VERSION="3.3.2"
 
 PASSED=0
-EXPECTED_CHECKS=24
+EXPECTED_CHECKS="${EXPECTED_CHECKS:-24}"
 
 info() { echo "== $*"; }
 pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
@@ -156,6 +157,7 @@ EOF
 module(name = "rules_tf_override_fixture", version = "0.0.1")
 
 bazel_dep(name = "rules_tf", version = "", repo_name = "rules_tf")
+bazel_dep(name = "platforms", version = "0.0.7")
 local_path_override(
     module_name = "rules_tf",
     path = "${REPO_ROOT}",
@@ -172,6 +174,28 @@ use_repo(tf, "tf_toolchains")
 
 register_toolchains("@tf_toolchains//:all")
 EOF
+}
+
+platform_rules() {
+  local dir="$1" os cpu other_cpu os_constraint host_cpu_constraint other_cpu_constraint
+  case "${host_os}" in linux) os="linux"; os_constraint="@platforms//os:linux" ;; darwin) os="osx"; os_constraint="@platforms//os:osx" ;; *) fail "unsupported execution OS: ${host_os}" ;; esac
+  case "${host_arch}" in amd64) cpu="x86_64"; other_cpu="aarch64"; host_cpu_constraint="@platforms//cpu:x86_64"; other_cpu_constraint="@platforms//cpu:aarch64" ;; arm64) cpu="aarch64"; other_cpu="x86_64"; host_cpu_constraint="@platforms//cpu:aarch64"; other_cpu_constraint="@platforms//cpu:x86_64" ;; *) fail "unsupported execution CPU: ${host_arch}" ;; esac
+  cat >> "${dir}/BUILD" <<EOF
+platform(name = "exec_host", constraint_values = ["${os_constraint}", "${host_cpu_constraint}"])
+platform(name = "exec_other", constraint_values = ["${os_constraint}", "${other_cpu_constraint}"])
+EOF
+  info "OpenTofu platform host=${os}/${cpu}, alternate=${os}/${other_cpu}"
+  local log="${WORK}/platform-$(basename "${dir}").log" status
+  if (cd "${dir}" && bazel build --host_platform=//:exec_host --extra_execution_platforms=//:exec_host --platforms=//:exec_host "${VALIDATE_TARGETS[@]}") >"${log}" 2>&1; then pass "[tofu] host target toolchain resolution"; else cat "${log}"; fail "[tofu] host target toolchain resolution failed"; fi
+  if (cd "${dir}" && bazel build --host_platform=//:exec_host --extra_execution_platforms=//:exec_host --platforms=//:exec_other "${VALIDATE_TARGETS[@]}") >"${log}" 2>&1; then pass "[tofu] alternate target toolchain resolution"; else cat "${log}"; fail "[tofu] alternate target toolchain resolution failed"; fi
+  if (cd "${dir}" && bazel build --nobuild --host_platform=//:exec_host --extra_execution_platforms=//:exec_other --platforms=//:exec_host --experimental_add_exec_constraints_to_targets="//tf/.*:validate=@platforms//cpu:${other_cpu}" --toolchain_resolution_debug=.*tf_toolchain_type "${VALIDATE_TARGETS[@]}") >"${log}" 2>&1; then
+    cat "${log}"; fail "[tofu] incompatible execution platform unexpectedly resolved"
+  else
+    cat "${log}"
+    grep -qF 'tf_toolchain_type' "${log}" || fail "[tofu] negative resolution output omitted tf_toolchain_type"
+    grep -Eq 'No matching toolchains found|Unable to find an execution platform' "${log}" || fail "[tofu] negative case failed for an unrelated reason"
+    pass "[tofu] incompatible execution platform rejected"
+  fi
 }
 
 # Locates the generated toolchain repository. The canonical repository name is
@@ -263,6 +287,7 @@ pass "[${ENGINE}] default mirror is laid out under ${REGISTRY}"
 (cd "${DEFAULT_DIR}" && bazel test --nocache_test_results "${VALIDATE_TARGETS[@]}" >/dev/null) \
   || fail "[${ENGINE}] the default, unpinned toolchain no longer validates"
 pass "[${ENGINE}] the default, unpinned path still works end to end"
+if [ "${ENGINE}" = tofu ]; then platform_rules "${DEFAULT_DIR}"; fi
 
 # Providers are served from two separate directories, standing in for the
 # separate hosts real providers come from: publishers put them wherever they
@@ -362,6 +387,7 @@ ISOLATE_CACHE=1 expect_toolchain_works "full" "${MIRROR_BOTH}
     cli_pins = \"//:cli_pins.json\",
     provider_pins = \"//:provider_pins.json\"," setup_both
 DIR="${LAST_DIR}"
+if [ "${ENGINE}" = tofu ]; then platform_rules "${DIR}"; fi
 
 OV_REPO="$(find_tf_repo "${DIR}")"
 [ -n "${OV_REPO}" ] || fail "could not locate the pinned toolchain repository"

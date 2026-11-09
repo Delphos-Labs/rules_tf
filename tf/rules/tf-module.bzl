@@ -30,8 +30,16 @@ tf_artifact = rule(
 
 
 def _module_impl(ctx):
-    if len([f for f in ctx.files.srcs if f.basename.endswith(".tf")  or f.basename.endswith(".tf.json") ]) == 0:
-        fail("tf modules must contain at least one .tf file.")
+    supported_srcs = [
+        f
+        for f in ctx.files.srcs
+        if f.basename.endswith(".tf") or
+        f.basename.endswith(".tf.json") or
+        f.basename.endswith(".tofu") or
+        f.basename.endswith(".tofu.json")
+    ]
+    if len(supported_srcs) == 0:
+        fail("tf modules must contain at least one .tf, .tf.json, .tofu, or .tofu.json file.")
 
     all_srcs = depset(
         ctx.files.srcs,
