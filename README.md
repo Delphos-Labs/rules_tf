@@ -131,6 +131,11 @@ register_toolchains(
 
 #### Native configuration tests
 
+`tf_module` admits configuration files ending in `.tf`, `.tf.json`, `.tofu`,
+or `.tofu.json`. The selected engine owns parsing and filename precedence.
+OpenTofu-only suffixes require OpenTofu. Admission does not promise that every
+engine can read every admitted suffix.
+
 Use `tf_test` to run the configured engine's native assertions against a private
 copy of the module's declared, package-mapped files. Test inputs, local modules,
 and a root `.terraform.lock.hcl` must be declared through the module mappings.
@@ -209,6 +214,11 @@ Explicit and macro-generated validation use the declared mapped inputs in a priv
 Registry modules can still require network access during initialization. Provider
 pins do not pin or checksum remote module downloads. The launcher supports POSIX
 directory runfiles on Linux and macOS.
+
+OpenTofu toolchain compatibility follows the execution platform, not the target
+CPU. The download remains specific to the repository host. This does not acquire
+a runtime for a different remote execution host or prove native execution on a
+different CPU.
 
 The native rule and verified acquisition work reuse upstream contributions:
 PR 28 by agentydragon and PR 30 by Sanath Manavarte. The implementation keeps

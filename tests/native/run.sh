@@ -50,7 +50,7 @@ test_bad() {
   has "${LOGS}/${ENGINE}-${name}.log" "${expected}"
 }
 snapshot() {
-  (cd "${ACTIVE}" && find basic assertion_failure init_failure locks mapped custom missing_input external_module validation -type f | LC_ALL=C sort | while IFS= read -r file; do
+  (cd "${ACTIVE}" && find basic assertion_failure init_failure locks mapped custom missing_input external_module validation tofu_only tofu_json_only -type f | LC_ALL=C sort | while IFS= read -r file; do
     printf '%s %s\n' "$(sha "${file}")" "${file}"
   done)
 }
@@ -136,6 +136,12 @@ EOF
   test_bad validation-semantic 'Reference to undeclared resource' //validation:validate
   test_ok validation-mapped 'configuration is valid' //mapped:validate_test
   test_ok validation-basic 'configuration is valid' //basic:validate //:validate //:external_validate
+  if [ "${ENGINE}" = tofu ]; then
+    test_ok tofu-only declared_answer //tofu_only:native_test
+    test_ok tofu-only-validation 'configuration is valid' //tofu_only:validate
+    test_ok tofu-json-only declared_answer //tofu_json_only:native_test
+    test_ok tofu-json-only-validation 'configuration is valid' //tofu_json_only:validate
+  fi
   test_ok custom custom_directory //custom:native_test
   test_bad assertion NATIVE_EXPECTED_FAILURE //assertion_failure:native_test
   test_bad init 'hashicorp/random' //init_failure:native_test
