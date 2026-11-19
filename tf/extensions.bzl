@@ -40,6 +40,7 @@ def _tf_repositories(ctx):
     tfdoc_toolchains = []
     terraform_toolchains = []
     tofu_toolchains = []
+    mirror_repos = []
 
     for module in ctx.modules:
         for index, version_tag in enumerate(module.tags.download):
@@ -80,27 +81,33 @@ def _tf_repositories(ctx):
 
             tflint_toolchains += [tflint_repo_name]
 
-            if version_tag.use_tofu:
-                tofu_download(
-                    name = tf_repo_name,
-                    version = version_tag.version,
-                    os = host_detected_os,
-                    arch = host_detected_arch,
-                    mirror = version_tag.mirror,
-                    cli_pins = version_tag.cli_pins,
-                    provider_pins = version_tag.provider_pins,
-                )
+            if version_tag.download_cli:
+                if not version_tag.version:
+                    fail("tf.download: 'version' is required unless download_cli = False.")
+            else:
+                # The caller registers its own tf_toolchain around a CLI it
+                # already pins and takes only the provider mirror from here.
+                if version_tag.version or version_tag.cli_pins:
+                    fail("tf.download: download_cli = False fetches no CLI, so 'version' and 'cli_pins' must be unset.")
+                if not version_tag.provider_pins:
+                    fail("tf.download: download_cli = False needs 'provider_pins': without a CLI the 'providers mirror' subprocess cannot populate the mirror.")
+
+            download = tofu_download if version_tag.use_tofu else terraform_download
+            download(
+                name = tf_repo_name,
+                version = version_tag.version,
+                download_cli = version_tag.download_cli,
+                os = host_detected_os,
+                arch = host_detected_arch,
+                mirror = version_tag.mirror,
+                cli_pins = version_tag.cli_pins,
+                provider_pins = version_tag.provider_pins,
+            )
+            if not version_tag.download_cli:
+                mirror_repos += [tf_repo_name]
+            elif version_tag.use_tofu:
                 tofu_toolchains += [tf_repo_name]
             else:
-                terraform_download(
-                    name = tf_repo_name,
-                    version = version_tag.version,
-                    os = host_detected_os,
-                    arch = host_detected_arch,
-                    mirror = version_tag.mirror,
-                    cli_pins = version_tag.cli_pins,
-                    provider_pins = version_tag.provider_pins,
-                )
                 terraform_toolchains += [tf_repo_name]
 
     tf_toolchains(
@@ -109,6 +116,7 @@ def _tf_repositories(ctx):
         tfdoc_repos = tfdoc_toolchains,
         terraform_repos = terraform_toolchains,
         tofu_repos = tofu_toolchains,
+        mirror_repos = mirror_repos,
         os = host_detected_os,
         arch = host_detected_arch,
     )
@@ -116,7 +124,13 @@ def _tf_repositories(ctx):
 _version_tag = tag_class(
     attrs = {
         "use_tofu": attr.bool(default = False),
-        "version": attr.string(mandatory = True),
+        "version": attr.string(
+            doc = "CLI version to download. Required unless download_cli = False.",
+        ),
+        "download_cli": attr.bool(
+            default = True,
+            doc = "Download the CLI and register a tf toolchain for it. Set False when the caller registers its own tf_toolchain around a CLI it already pins: the repository then holds only the provider mirror, exposed as '@tf_toolchains//:mirror', and 'provider_pins' is required.",
+        ),
         "tflint_version": attr.string(default = TFLINT_VERSION),
         "tfdoc_version": attr.string(default = TFDOC_VERSION),
         "tflint_sha256": attr.string_dict(),
