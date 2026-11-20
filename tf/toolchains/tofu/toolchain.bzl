@@ -314,7 +314,10 @@ def _download_impl(ctx):
         },
     )
 
-    _download_cli(ctx)
+    # Without the CLI, '_setup_mirror' takes the provider_pins branch, which the
+    # extension requires in that case.
+    if ctx.attr.download_cli:
+        _download_cli(ctx)
     _setup_mirror(ctx)
 
     return
@@ -322,7 +325,8 @@ def _download_impl(ctx):
 tofu_download = repository_rule(
     implementation = _download_impl,
     attrs = {
-        "version": attr.string(mandatory = True),
+        "version": attr.string(),
+        "download_cli": attr.bool(default = True),
         "os": attr.string(mandatory = True),
         "arch": attr.string(mandatory = True),
         "mirror": attr.string_dict(mandatory = True),

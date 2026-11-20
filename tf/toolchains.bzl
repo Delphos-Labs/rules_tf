@@ -112,6 +112,16 @@ package(default_visibility = ["//visibility:public"])
         )
         content += chunk
 
+    # A download without its CLI registers no toolchain: the caller's own
+    # tf_toolchain takes the mirror through this alias.
+    for repo in ctx.attr.mirror_repos:
+        content += """
+alias(
+    name = "mirror",
+    actual = "@{toolchain_repo}//:mirror",
+)
+""".format(toolchain_repo = repo)
+
     ctx.file( "BUILD.bazel", content, executable = False )
 
 tf_toolchains = repository_rule(
@@ -121,6 +131,7 @@ tf_toolchains = repository_rule(
         "tfdoc_repos": attr.string_list(mandatory = True),
         "terraform_repos": attr.string_list(mandatory = True),
         "tofu_repos": attr.string_list(mandatory = True),
+        "mirror_repos": attr.string_list(default = []),
         "os": attr.string(mandatory = True),
         "arch": attr.string(mandatory = True),
     },

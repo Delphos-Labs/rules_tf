@@ -73,6 +73,47 @@ must match the mirror request. Digests above are placeholders, not usable
 checksums. Pins use public URLs. Configure Bazel's downloader to rewrite origins
 when a proxy or mirror is required.
 
+### Bringing your own CLI
+
+A repository that already pins the engine binary, for example with
+rules_multitool, can keep that single pin and take only the provider mirror
+from `tf.download`. Set `download_cli = False`, leave `version` and `cli_pins`
+unset, and give `provider_pins`. The extension then registers no tf toolchain
+and exposes the mirror as `@tf_toolchains//:mirror`. Register a `tf_toolchain`
+that pairs your binary with that mirror:
+
+```python
+# MODULE.bazel
+tf.download(
+    download_cli = False,
+    use_tofu = True,
+    mirror = {"null": "hashicorp/null:3.1.1"},
+    provider_pins = "//:provider-pins.json",
+)
+use_repo(tf, "tf_toolchains")
+register_toolchains("//tools:tf_toolchain")
+```
+
+```python
+# tools/BUILD.bazel
+load("@rules_tf//tf:toolchains.bzl", "tf_toolchain")
+
+tf_toolchain(
+    name = "tf_toolchain_impl",
+    mirror = "@tf_toolchains//:mirror",
+    tf = "@multitool//tools/tofu",
+)
+
+toolchain(
+    name = "tf_toolchain",
+    toolchain = ":tf_toolchain_impl",
+    toolchain_type = "@rules_tf//:tf_toolchain_type",
+)
+```
+
+The mirror holds providers for the host platform only, as with the default
+download.
+
 To import rules_tf in your project, you first need to add it to your `MODULE.bazel` file:
 
 ```python

@@ -28,7 +28,7 @@ case "${ENGINE}" in
     USE_TOFU="True"
     VERSION="1.9.0"
     CLI_DIR="tofu"
-    EXPECTED_CHECKS=30
+    EXPECTED_CHECKS=33
     # OpenTofu uses a different registry, so the mirror path differs from
     # terraform's even though the zip file names are identical.
     REGISTRY="registry.opentofu.org"
@@ -101,7 +101,7 @@ NULL_VERSION="3.1.1"
 RANDOM_VERSION="3.3.2"
 
 PASSED=0
-EXPECTED_CHECKS="${EXPECTED_CHECKS:-24}"
+EXPECTED_CHECKS="${EXPECTED_CHECKS:-27}"
 
 info() { echo "== $*"; }
 pass() { echo "PASS: $*"; PASSED=$((PASSED + 1)); }
@@ -121,6 +121,9 @@ sha256_of() {
 # Any *.json file placed in "${dir}" before the module is built is exported,
 # so pins files can be referenced as //:<name> labels.
 #
+# Set OMIT_VERSION=1 to leave 'version' out of tf.download(), as a download
+# without its CLI requires.
+#
 # Set ISOLATE_CACHE=1 before calling to give the module its own repository
 # cache. That matters whenever the test asserts something about *how* an
 # artifact is fetched: the shared cache is keyed by sha256, so it will happily
@@ -132,6 +135,10 @@ make_module() {
   printf '%s\n' "${dir}" >>"${WORK}/workspaces"
   if [ "${ISOLATE_CACHE:-0}" = "1" ]; then
     cache="${WORK}/isolated-caches/$(basename "${dir}")"
+  fi
+  local version_attr="    version = \"${VERSION}\","
+  if [ "${OMIT_VERSION:-0}" = "1" ]; then
+    version_attr=""
   fi
   cp -R "${FIXTURE_TF}" "${dir}/tf"
   # Bazel 6 locates the workspace root via WORKSPACE rather than MODULE.bazel.
@@ -165,7 +172,7 @@ local_path_override(
 
 tf = use_extension("@rules_tf//tf:extensions.bzl", "tf_repositories")
 tf.download(
-    version = "${VERSION}",
+${version_attr}
     use_tofu = ${USE_TOFU},
 ${attrs}
 )
@@ -449,6 +456,33 @@ PROV_ONLY_REPO="$(find_tf_repo "${LAST_DIR}")"
 shutdown_bazel "${LAST_DIR}"
 pass "[${ENGINE}] provider pins compose with the default CLI download"
 
+# The caller pins its own CLI and registers its own tf_toolchain around it, so
+# the download contributes only the provider mirror. The CLI produced by the
+# default path stands in for the caller's binary.
+info "[${ENGINE}] case: CLI brought by the caller, only the mirror downloaded"
+setup_own_cli() {
+  write_provider_pins "$1/provider_pins.json"
+  cp "${SRC_REPO}/${CLI_DIR}/${CLI_DIR}" "$1/engine"
+  cat >> "$1/BUILD" <<'EOF'
+load("@rules_tf//tf:toolchains.bzl", "tf_toolchain")
+tf_toolchain(name = "own_tf_impl", tf = "engine", mirror = "@tf_toolchains//:mirror")
+toolchain(name = "own_tf", toolchain = ":own_tf_impl", toolchain_type = "@rules_tf//:tf_toolchain_type")
+EOF
+  echo 'register_toolchains("//:own_tf")' >> "$1/MODULE.bazel"
+}
+OMIT_VERSION=1 ISOLATE_CACHE=1 expect_toolchain_works "own-cli" "${MIRROR_BOTH}
+    download_cli = False,
+    provider_pins = \"//:provider_pins.json\"," setup_own_cli
+OWN_CLI_REPO="$(find_tf_repo "${LAST_DIR}")"
+[ ! -e "${OWN_CLI_REPO}/${CLI_DIR}" ] || fail "[${ENGINE}] CLI was downloaded despite download_cli = False"
+[ ! -e "${OWN_CLI_REPO}/sha256sums" ] || fail "[${ENGINE}] checksum manifest was fetched despite download_cli = False"
+[ -f "${OWN_CLI_REPO}/mirror/${REGISTRY}/hashicorp/null/terraform-provider-null_${NULL_VERSION}_${host_os}_${host_arch}.zip" ] \
+  || fail "[${ENGINE}] pinned provider is not at the canonical mirror path"
+registered="$(cd "${LAST_DIR}" && bazel query 'attr(toolchain_type, tf_toolchain_type, @tf_toolchains//:all)')"
+[ -z "${registered}" ] || fail "[${ENGINE}] a tf toolchain was declared despite download_cli = False: ${registered}"
+shutdown_bazel "${LAST_DIR}"
+pass "[${ENGINE}] a caller-supplied CLI validates against the downloaded mirror"
+
 # Registry addresses are lowercase, but call sites write the registry's display
 # casing, which for many publishers is capitalised. Without the normalisation
 # the lookup misses and the provider is written to the wrong directory.
@@ -682,6 +716,19 @@ setup_wrapped() {
 ISOLATE_CACHE=1 expect_failure "wrapped-cli-archive" "    mirror = {\"null\": \"hashicorp/null:3.1.1\"},
     cli_pins = \"//:cli_pins.json\"," \
   "does not contain the expected layout" setup_wrapped
+
+# A download without its CLI must not keep a CLI version that nothing uses,
+# and cannot populate the mirror without provider pins.
+info "[${ENGINE}] case: download_cli = False with a CLI version"
+expect_failure "own-cli-with-version" "    mirror = {\"null\": \"hashicorp/null:3.1.1\"},
+    download_cli = False,
+    provider_pins = \"//:provider_pins.json\"," \
+  "'version' and 'cli_pins' must be unset" setup_providers_only
+
+info "[${ENGINE}] case: download_cli = False without provider pins"
+OMIT_VERSION=1 expect_failure "own-cli-without-provider-pins" "    mirror = {\"null\": \"hashicorp/null:3.1.1\"},
+    download_cli = False," \
+  "download_cli = False needs 'provider_pins'"
 
 info "[${ENGINE}] case: two locked roots select different pinned versions"
 MULTI_DIR="${WORK}/multi-version"
